@@ -1,3 +1,4 @@
+//V1.0		FEB 2016
 // 			Every mm is 0.01mm per unit (eg. RTServoPosmm = 100 means 1mm)
 
 #include "inc/hw_types.h"
