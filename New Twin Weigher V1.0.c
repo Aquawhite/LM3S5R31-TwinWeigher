@@ -1,3 +1,7 @@
+//V1.4		Point no 1 only been implemented for TR Module only, will continue for other modules
+//			Optimizing all modules so the machine can be faster. Based on GT Timings (GTModuleStepTimer)
+//			Have an idea to have GTRequestFilling so the timing can be adjusted, also OFRequesttoo
+//			Need to add timing settings for SPVibEngage
 //V1.3		1.Add additional check for Init Mode, 1 sensor should be checked on the OFF and ON STATE
 //			not just the ON State
 //			2.SPPusher 0 State is changed to FALSE
@@ -204,7 +208,7 @@ unsigned int BufferSensor;
 unsigned int  ReadACKCounter = 1000;
 unsigned char dataIndex = 0, dataRXIndex = 0, dataTXIndex = 0;
 unsigned char  ComAddress = 0, BytestoRead = 0;
-unsigned char ComOUT[130], ComIN[110];
+unsigned char ComOUT[150], ComIN[110];
 tBoolean ComDirection = FALSE, ComEnable = FALSE, DoubleSpeed = FALSE, UARTDisabled = FALSE;
 unsigned char DataTimerTrigger = FALSE, DataLock = FALSE, DataReady = FALSE, ReadACK = FALSE;
 unsigned char TransferIdle = FALSE, ReceiveIdle = FALSE;
@@ -278,9 +282,12 @@ unsigned int GTCloseBagDelay, GTCloseBagDelayCounter, GTBothOpenGripDelay, GTBot
 unsigned char GTFirstCycle = TRUE;
 
 unsigned char GTFPushPneuValve;
-unsigned int GTFPushPneuValveDuration, GTFPushPneuValveDurationCounter;
+unsigned int GTFPushPneuValveDelay, GTFPushPneuValveDelayCounter;
 
 unsigned char GTSbsMON, LastGTSbsMON, GTModMON, LastGTModMON;
+unsigned int GTModuleStepTimer[10], GTModuleStepTimerCounter[10];
+unsigned int GTRequestFillingDelayCounter, GTRequestFillingDelay;
+
 /* Filling Module & Vibrator Filling Module */
 unsigned int OFGatePneuRetSensor, OFGatePneuExtSensor, OFEngagePneuRetSensor, OFEngagePneuExtSensor;
 unsigned int OFOpenPneuRRetSensor, OFOpenPneuLRetSensor, OFOpenPneuRExtSensor, OFOpenPneuLExtSensor;
@@ -298,11 +305,21 @@ unsigned char OFModuleStep, OFModuleWaiting;
 unsigned char OFSbsMON, LastOFSbsMON, OFModMON, LastOFModMON;
 
 unsigned char OFRequestFilling;
+
+unsigned char OFGatePneuValveVibratorMode;
+unsigned long int OFGatePneuValveVibratorPeriod, OFGatePneuValveVibratorPeriodCounter;
+unsigned long int OFGatePneuValveVibratorFrequency, OFGatePneuValveVibratorDutyCycle;
+unsigned int OFGatePneuValveDelay, OFGatePneuValveDelayCounter;
+unsigned int OFGatePneuValveVibDelay, OFGatePneuValveVibDelayCounter;
+
 unsigned char VFVibEngagePneuValveVibratorMode;
 unsigned long int VFVibEngageVibratorPeriod, VFVibEngageVibratorPeriodCounter;
 unsigned long int VFVibEngageVibratorFrequency, VFVibEngageVibratorDutyCycle;
 unsigned int VFVibratorEngageDelay, VFVibratorEngageDelayCounter;
 unsigned int VFVibratorEngageVibDelay, VFVibratorEngageVibDelayCounter;
+
+unsigned int OFRequestFillingDelayCounter, OFRequestFillingDelay;
+unsigned char OFFastRequestFilling;
 
 /* Sealing Module & Vibrator Sealer Module */
 unsigned int SPSealerPneuRetSensor, SPSealerPneuExtSensor, SPVibEngagePneuRetSensor, SPVibEngagePneuExtSensor;
@@ -779,7 +796,7 @@ void UART0IntHandler(void)
 	                case 52:
 	                    if(ComAddress == 1)
 	                    {
-	                    	GTFPushPneuValveDuration = ComIN[52] * 10;
+	                    	GTFPushPneuValveDelay = ComIN[52] * 10;
 	                    }
 	                    break;
 	                case 54:
@@ -830,6 +847,44 @@ void UART0IntHandler(void)
 	                    if(ComAddress == 1)
 	                    {
 	                    	VFVibratorEngageVibDelay = ComIN[59] * 10;
+	                    }
+	                    break;
+	                case 60:
+	                    if(ComAddress == 1)
+	                    {
+	                    	OFGatePneuValveVibratorFrequency = ComIN[60];
+	                    	if(OFGatePneuValveVibratorFrequency)
+	                    		OFGatePneuValveVibratorPeriod = 10000 / OFGatePneuValveVibratorFrequency; // 1 (0.1hz) = 10000 ms
+	                    	else
+	                    		OFGatePneuValveVibratorPeriod = 0;		// Means DISACTIVATE VIBRATION MODE
+	                    }
+	                    break;
+	                case 61:
+	                    if(ComAddress == 1)
+	                    {
+	                    	if(ComIN[61])
+	                    		OFGatePneuValveVibratorDutyCycle = ComIN[61];
+	                    	else
+	                    		OFGatePneuValveVibratorDutyCycle = 50;
+	                    }
+	                    break;
+	                case 62:
+	                    if(ComAddress == 1)
+	                    {
+	                    	//OFGatePneuValveDelay = ComIN[62] * 10;
+	                    	GTRequestFillingDelay = ComIN[62] * 10;		// WARNING BORROW VARIABLE
+	                    }
+	                    break;
+	                case 63:
+	                    if(ComAddress == 1)
+	                    {
+	                    	OFGatePneuValveVibDelay = ComIN[63] * 10;
+	                    }
+	                    break;
+	                case 64:
+	                    if(ComAddress == 1)
+	                    {
+	                    	OFRequestFillingDelay = ComIN[64] * 10;
 	                    }
 	                    break;
 	                case 90:	// case 90 - 98 is for Direct PORTOUT  PORTA = 90, PORTJ = 98
@@ -978,7 +1033,7 @@ void Timer0IntHandler(void)
     // Blinking Yellow if Machine Stopping OR the Steps are stuck somewhere
     // Machine Not Running :
     // Yellow if machine is okay, just waiting to be run
-    // Blinking Red if there are errors
+    // Blinking Red if there are errors+
     if(MachineRunning)
     {
     	if( (!TRModuleStepCounter) && (!GTModuleStepCounter) &&
@@ -1075,7 +1130,7 @@ void Timer0IntHandler(void)
 	}
 	if(OFSbsMON)
 	{
-		if(OFModuleStep == 8)
+		if(OFModuleStep == 9)
 			OFModuleStep = 0;
 		else
 			OFModuleStep++;
@@ -1741,6 +1796,7 @@ void Timer0IntHandler(void)
 				//TRFoilPusherValve	= FALSE;
 				if(!TRVacuumValveDelayCounter)
 				{
+					GTFPushPneuValveDelayCounter = GTFPushPneuValveDelay;
 					if(!TRInitting)
 						TRVacuumValveDelayCounter = TRVacuumValveDelay + 1;
 
@@ -1755,6 +1811,7 @@ void Timer0IntHandler(void)
 				{
 					TRExtenderPneuValve = FALSE;
 					TRReorientPneuValve = FALSE;
+					//GTFPushPneuValve 	= TRUE;
 					if(!TRInitting)
 						TRVacuumValve		= TRUE;
 					//TRFoilPusherValve	= FALSE;
@@ -1794,43 +1851,55 @@ void Timer0IntHandler(void)
 				}
 				break;
 			case 4: // Transfer & Reorient, go to in-fill gripper
-				TRExtenderPneuValve = FALSE;
-				TRReorientPneuValve = TRUE;
-				TRVacuumValve		= TRUE;
-				//TRFoilPusherValve	= FALSE;
-				if( (!TRReorientPneuExtSensor)
-					&& TRReorientPneuRetSensor)
-				{
-					if(!TRSbsMode)
-						TRModuleStep = 5;
-					else
-						TRSbsMode = FALSE;
-
-					TRModuleWaiting = TRUE;
-
-					if(TRInittingTOCounter)
+				//if((!TRModuleWaitingPick) || TRInitting )
+				//{
+					TRExtenderPneuValve = FALSE;
+					TRReorientPneuValve = TRUE;
+					TRVacuumValve		= TRUE;
+					//GTFPushPneuValve 	= TRUE;
+					//TRFoilPusherValve	= FALSE;
+					if( (!TRReorientPneuExtSensor)
+						&& TRReorientPneuRetSensor)
 					{
-						TRInittingTOCounter = 0;
-						//TRInitError -= 8;
-					}
-				}
-				else
-				{
-					if(TRInitting)
-					{
-						if(!TRInittingTOCounter)
+						if(MachineStopping)
 						{
-							TRInittingTOCounter = InittingTO;
-							//TRInitError += 8;
+							GTFPushPneuValve = FALSE;
+							GTFPushPneuValveDelayCounter = 0;
+						}
+
+						if(!TRSbsMode)
+							TRModuleStep = 5;
+						else
+							TRSbsMode = FALSE;
+
+						TRModuleWaiting = TRUE;
+
+						if(TRInittingTOCounter)
+						{
+							TRInittingTOCounter = 0;
+							//TRInitError -= 8;
 						}
 					}
-				}
+					else
+					{
+						if(TRInitting)
+						{
+							if(!TRInittingTOCounter)
+							{
+								TRInittingTOCounter = InittingTO;
+								//TRInitError += 8;
+							}
+						}
+					}
+				//}
 				break;
 			case 5: //	Waiting for in-fill gripper to take over foil
 				if( (!TRModuleWaiting) || MachineStopping || TRInitting)
 				{
 					TRModuleStep = 6;
 					TRModuleWaitingPick = TRUE;
+					GTFPushPneuValveDelayCounter = 0;
+					GTFPushPneuValve 	= FALSE;
 				}
 				break;
 			case 6:	// Shut down vacuum before moving
@@ -1877,22 +1946,23 @@ void Timer0IntHandler(void)
 						TRInitError |= 1;
 					if(TRReorientPneuRetSensor)
 						TRInitError |= 2;
+
 					if(!TRExtenderPneuExtSensor)
-						TRInitError |= 1;
+						TRInitError |= 4;
 					if(!TRReorientPneuExtSensor)
-						TRInitError |= 2;
+						TRInitError |= 8;
 					break;
 				case 1:
 					if(TRExtenderPneuExtSensor)
 						TRInitError |= 4;
 					if(!TRExtenderPneuRetSensor)
-						TRInitError |= 4;
+						TRInitError |= 1;
 					break;
 				case 4:
 					if(TRReorientPneuExtSensor)
 						TRInitError |= 8;
 					if(!TRReorientPneuRetSensor)
-						TRInitError |= 8;
+						TRInitError |= 2;
 			}
 			TRModuleStep++;
 		}
@@ -1905,7 +1975,7 @@ void Timer0IntHandler(void)
 		switch(GTModuleStep)
 		{
 			case 0:  // Standby
-				GTFPushPneuValve = FALSE;
+				//GTFPushPneuValve = FALSE;
 				GTInFillGripPneuValve = TRUE;	// Grip Open
 				GTTransferPneuValve = FALSE;
 
@@ -1914,7 +1984,10 @@ void Timer0IntHandler(void)
 
 				if( (MachineRunning && (!MachineStopping)) || GTInitting )
 				{	// no Open Gripper Delay.. maybe need later after trial
-					if( (!GTOutFillOpenPneuLRetSensor) && (!GTOutFillOpenPneuRRetSensor) && (!GTTransferPneuRetSensor) )
+					if( (!GTOutFillOpenPneuLRetSensor) && (!GTOutFillOpenPneuRRetSensor) && (!GTTransferPneuRetSensor)
+							&& GTOutFillOpenPneuLExtSensor && GTOutFillOpenPneuRExtSensor && GTTransferPneuExtSensor
+							&& GTOutFillGripPneuLRetSensor && GTOutFillGripPneuRRetSensor
+							&& GTInFillGripPneuLRetSensor && GTInFillGripPneuRRetSensor )
 					{
 						if(!GTSbsMode)
 							GTModuleStep = 1;
@@ -1943,24 +2016,27 @@ void Timer0IntHandler(void)
 			case 1:  // SA1 : Receive the foil from TR (Activate foil pusher), SA2 Initiate Filling Process
 				// SA 1 Close grip because the foil is already in position by TR Module
 				GTTransferPneuValve = FALSE;
-				if( TRModuleWaiting && (!GTInitting) )
+				/*if( TRModuleWaiting && (!GTInitting) )
 				{
 					GTFPushPneuValve = TRUE;
-					GTFPushPneuValveDurationCounter = GTFPushPneuValveDuration;
-				}
+					GTFPushPneuValveDelayCounter = GTFPushPneuValveDelay;
+				}*/
 				// SA 2 Close grip because the foil is already in position by F Module
 				if(OFModuleWaiting || GTFirstCycle || GTInitting)
 				{
 					GTOutFillOpenPneuValve = FALSE;
 					GTOutFillGripPneuValve = FALSE;	// Grip Closed
+					if( (!GTFirstCycle) && (!GTRequestFilling) )					// WARNING NEW
+						if(!GTRequestFillingDelayCounter)
+							GTRequestFillingDelayCounter = GTRequestFillingDelay;
 				}
 
-				if(((!GTOutFillGripPneuLRetSensor) && (!GTOutFillGripPneuRRetSensor) && (GTFPushPneuValve || GTInitting)) || MachineStopping)
+				if(((!GTOutFillGripPneuLRetSensor) && (!GTOutFillGripPneuRRetSensor) && TRModuleWaiting/*&& (GTFPushPneuValve || GTInitting)*/) || MachineStopping)
 				{
 					if(MachineStopping)
 					{
 						GTFPushPneuValve = FALSE;
-						GTFPushPneuValveDurationCounter = 0;
+						GTFPushPneuValveDelayCounter = 0;
 					}
 					if(!GTSbsMode)
 						GTModuleStep = 2;
@@ -1992,12 +2068,12 @@ void Timer0IntHandler(void)
 				GTTransferPneuValve = FALSE;
 
 				// SA 1 After PushPneuDelay, Activate Gripper
-				if(!GTFPushPneuValveDurationCounter)
+				if(!GTFPushPneuValveDelayCounter)
 				GTInFillGripPneuValve = FALSE;	// Grip Closed
 
 				if((!GTInFillGripPneuLRetSensor) && (!GTInFillGripPneuRRetSensor))
 				{
-					GTFPushPneuValve = FALSE;
+					//GTFPushPneuValve = FALSE;
 					// Move TR Module Waiting after Transfer Pneu been done
 					if(TRModuleWaiting)
 					{
@@ -2010,7 +2086,8 @@ void Timer0IntHandler(void)
 				// SA 2 Initiating opening the bag
 				GTOutFillOpenPneuValve = TRUE;	// Open the bag
 				GTOutFillGripPneuValve = FALSE;	// Grip Still Closed
-				if((!GTOutFillOpenPneuLExtSensor) && (!GTOutFillOpenPneuRExtSensor) && (!GTFPushPneuValve))
+				if((!GTOutFillOpenPneuLExtSensor) && (!GTOutFillOpenPneuRExtSensor) && TRModuleWaitingPick// && (!GTFPushPneuValve)
+						&& GTOutFillOpenPneuLRetSensor && GTOutFillOpenPneuRRetSensor )
 				{
 					OFModuleWaiting = FALSE;
 					if(!GTSbsMode)
@@ -2074,8 +2151,8 @@ void Timer0IntHandler(void)
 
 				// SA 2 // Request Filling and wait till Filling finished
 				// Skip Filling if First Cycle
-				if(!GTFirstCycle)
-					GTRequestFilling = TRUE;
+				//if(!GTFirstCycle)
+				//	GTRequestFilling = TRUE;
 
 				if(!GTSbsMode)
 					GTModuleStep = 5;
@@ -2124,7 +2201,7 @@ void Timer0IntHandler(void)
 				GTOutFillOpenPneuValve = FALSE; // Bag Closed
 				GTOutFillGripPneuValve = FALSE;	// Grip Closed
 				GTTransferPneuValve = TRUE;		// Shift Arm 1 go to filling position
-				if(!GTTransferPneuExtSensor)
+				if( (!GTTransferPneuExtSensor) && GTTransferPneuRetSensor )
 				{
 					GTSA1ModuleWaiting = TRUE;
 					GTSA2ModuleWaiting = TRUE;
@@ -2197,7 +2274,7 @@ void Timer0IntHandler(void)
 				{
 					GTModuleStep = 0;
 					// Step 0
-					GTFPushPneuValve = FALSE;
+					//GTFPushPneuValve = FALSE;
 					GTInFillGripPneuValve = TRUE;	// Grip Open
 					GTTransferPneuValve = FALSE;
 
@@ -2211,8 +2288,12 @@ void Timer0IntHandler(void)
 		}
 	}
 
-	if(GTFPushPneuValveDurationCounter)
-		GTFPushPneuValveDurationCounter--;
+	if(GTFPushPneuValveDelayCounter)
+	{
+		GTFPushPneuValveDelayCounter--;
+		if(!GTFPushPneuValveDelayCounter)
+			GTFPushPneuValve = TRUE;
+	}
 
 	if(GTCloseBagDelayCounter)
 	{
@@ -2224,6 +2305,13 @@ void Timer0IntHandler(void)
 	if(GTBothOpenGripDelayCounter)
 		GTBothOpenGripDelayCounter--;
 
+	if(GTRequestFillingDelayCounter)
+	{
+		GTRequestFillingDelayCounter--;
+		if(!GTRequestFillingDelayCounter)
+			GTRequestFilling = TRUE;
+	}
+
 	if(GTInittingTOCounter)
 	{
 		GTInittingTOCounter--;
@@ -2234,35 +2322,73 @@ void Timer0IntHandler(void)
 			{
 				case 0:
 					if(GTOutFillOpenPneuLRetSensor)
-						GTInitError += 1;
+						GTInitError |= 1;
 					if(GTOutFillOpenPneuRRetSensor)
-						GTInitError += 2;
+						GTInitError |= 2;
 					if(GTTransferPneuRetSensor)
-						GTInitError += 4;
+						GTInitError |= 4;
+
+					if(!GTOutFillOpenPneuLExtSensor)
+						GTInitError |= 128;
+					if(!GTOutFillOpenPneuRExtSensor)
+						GTInitError |= 256;
+					if(!GTTransferPneuExtSensor)
+						GTInitError |= 512;
+					if(!GTOutFillGripPneuLRetSensor)
+						GTInitError |= 8;
+					if(!GTOutFillGripPneuRRetSensor)
+						GTInitError |= 16;
+					if(!GTInFillGripPneuLRetSensor)
+						GTInitError |= 32;
+					if(!GTInFillGripPneuRRetSensor)
+						GTInitError |= 64;
 					break;
 				case 1:
 					if(GTOutFillGripPneuLRetSensor)
-						GTInitError += 8;
+						GTInitError |= 8;
 					if(GTOutFillGripPneuRRetSensor)
-						GTInitError += 16;
+						GTInitError |= 16;
 					break;
 				case 2:
 					if(GTInFillGripPneuLRetSensor)
-						GTInitError += 32;
+						GTInitError |= 32;
 					if(GTInFillGripPneuRRetSensor)
-						GTInitError += 64;
+						GTInitError |= 64;
 					if(GTOutFillOpenPneuLExtSensor)
-						GTInitError += 128;
+						GTInitError |= 128;
 					if(GTOutFillOpenPneuRExtSensor)
-						GTInitError += 256;
+						GTInitError |= 256;
+
+					if(!GTOutFillOpenPneuLRetSensor)
+						GTInitError |= 1;
+					if(!GTOutFillOpenPneuRRetSensor)
+						GTInitError |= 2;
 					break;
 				case 6:
 					if(GTTransferPneuExtSensor)
-						GTInitError += 512;
+						GTInitError |= 512;
+
+					if(!GTTransferPneuRetSensor)
+						GTInitError |= 4;
 					break;
 			}
 			GTModuleStep++;
 		}
+	}
+
+	// Module Timer for Analytical Purpose
+	if(MachineRunning)
+	{
+		GTModuleStepTimerCounter[GTModuleStep]++;
+		if(GTModuleStep < 9)
+			GTModuleStepTimerCounter[GTModuleStep + 1] = 0;
+		else
+			GTModuleStepTimerCounter[0] = 0;
+
+		if(GTModuleStep)
+			GTModuleStepTimer[GTModuleStep - 1] = GTModuleStepTimerCounter[GTModuleStep - 1];
+		else
+			GTModuleStepTimer[9] = GTModuleStepTimerCounter[9];
 	}
 	/* Grip & Transfer Module ^ */
 
@@ -2281,7 +2407,8 @@ void Timer0IntHandler(void)
 
 				if((MachineRunning && (!MachineStopping)) || OFInitting )
 				{
-					if( (!OFGatePneuRetSensor) && (!OFEngagePneuRetSensor) && (!OFOpenPneuRRetSensor) && (!OFOpenPneuLRetSensor) && (!VFVibEngagePneuRetSensor) )
+					if( (!OFGatePneuRetSensor) && (!OFEngagePneuRetSensor) && (!OFOpenPneuRRetSensor) && (!OFOpenPneuLRetSensor) && (!VFVibEngagePneuRetSensor)
+							&& OFGatePneuExtSensor && OFEngagePneuExtSensor && OFOpenPneuRExtSensor && OFOpenPneuLExtSensor && VFVibEngagePneuExtSensor )
 					{
 						if(!OFSbsMode)
 							OFModuleStep = 1;
@@ -2316,7 +2443,8 @@ void Timer0IntHandler(void)
 					OFVacuumValve = FALSE;
 					VFVibEngagePneuValve = FALSE;
 					VFVibrator = FALSE;
-					if((!OFEngagePneuExtSensor) && (!OFOpenPneuRExtSensor) && (!OFOpenPneuLExtSensor))
+					if((!OFEngagePneuExtSensor) && (!OFOpenPneuRExtSensor) && (!OFOpenPneuLExtSensor)
+							&& OFEngagePneuRetSensor && OFOpenPneuRRetSensor && OFOpenPneuLRetSensor )
 					{
 						if(!OFSbsMode)
 							OFModuleStep = 2;
@@ -2419,7 +2547,7 @@ void Timer0IntHandler(void)
 					VFVibEngagePneuValve = TRUE;	// Used for Initting purpose
 				VFVibrator = FALSE;
 				// If not Initting, just OFEngagePneuRetSensor, if Initting, check both OFEngage & VfVib
-				if( (!OFEngagePneuRetSensor) && ((!OFInitting) || (!VFVibEngagePneuExtSensor)) )
+				if( (!OFEngagePneuRetSensor) && ((!OFInitting) || ((!VFVibEngagePneuExtSensor) && VFVibEngagePneuRetSensor)) )
 				{
 					OFVacuumValve = FALSE;
 					if(!OFSbsMode)
@@ -2448,7 +2576,7 @@ void Timer0IntHandler(void)
 			case 6:	// Open the BRIDGE to initiate FILLING PROCESS
 				if(GTRequestFilling || MachineStopping || OFInitting)
 				{
-					OFGatePneuValve	= TRUE;			// Thrust the Gate Tongue
+					OFGatePneuValve	= TRUE;			// Thrust the Gate Tongue (V1.4 Moved into GT0)
 					OFEngagePneuValve = FALSE;
 					OFOpenPneuValve = FALSE;
 					OFVacuumValve = FALSE;
@@ -2457,8 +2585,23 @@ void Timer0IntHandler(void)
 					else
 						VFVibEngagePneuValve = TRUE;	// Used for Initting purpose
 					VFVibrator = FALSE;
-					if(!OFGatePneuExtSensor)
+
+					if( (!OFRequestFilling) && (!OFRequestFillingDelayCounter) )
 					{
+						// if weight is already OK before checking, then OPEN faster
+						if(WLCLWeightOK || WLCRWeightOK)
+						{
+							OFRequestFillingDelayCounter = OFRequestFillingDelay;
+							VFVibrator = TRUE;				// Start Vibrating
+							VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
+							OFFastRequestFilling = TRUE;
+						}
+					}
+					if( (!OFGatePneuExtSensor) && OFGatePneuRetSensor )
+					{
+						if(OFGatePneuValveVibratorFrequency)	// Set Frequency = 0 for make it inactive
+							OFGatePneuValveVibDelayCounter = OFGatePneuValveVibDelay + 1;
+
 						if(!OFSbsMode)
 							OFModuleStep = 7;
 						else
@@ -2489,23 +2632,51 @@ void Timer0IntHandler(void)
 					OFModuleStep = 8;
 					OFRequestFilling = FALSE;
 				}
-				if(WLCLWeightOK || WLCRWeightOK)
+				// if the weigher was ready sooner, then OFRequestSooner
+				// BUT if the weight was not OK, then wait till weight OK
+				if(OFFastRequestFilling)
 				{
-					OFRequestFilling = TRUE;
-					VFVibrator = TRUE;				// Start Vibrating
-					VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
-					//VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
+					OFFastRequestFilling = FALSE;
 					if(!OFSbsMode)
 						OFModuleStep = 8;
 					else
 						OFSbsMode = FALSE;
+
 				}
+				else
+				{
+					if(WLCLWeightOK || WLCRWeightOK)
+					{
+						OFRequestFilling = TRUE;
+						VFVibrator = TRUE;				// Start Vibrating
+						VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
+						VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
+						if(!OFSbsMode)
+							OFModuleStep = 8;
+						else
+							OFSbsMode = FALSE;
+					}
+				}
+				//if(WLCLWeightOK || WLCRWeightOK)
+				//{
+				//	OFRequestFilling = TRUE;
+				//	VFVibrator = TRUE;				// Start Vibrating
+				//	VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
+					//VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
+					//if(!OFSbsMode)
+					//	OFModuleStep = 8;
+					//else
+					//	OFSbsMode = FALSE;
+				//}
 				break;
 			case 8:	// Close the gate after finished & Stop Vibrating, tell GT to continue
 				if( (!OFRequestFilling) && (!OFGatePneuValveDurationCounter) && (!WLOpGatePneuDurationCounter) && (!WROpGatePneuDurationCounter) )
 				{
 					GTRequestFilling = FALSE;			// Finished Filling, tell GT to continue
 
+					OFGatePneuValveDelayCounter = 0;			// Cancel the order to vibrate if delay too long
+					OFGatePneuValveVibDelayCounter = 0;		// Cancel the order to vibrate if delay too long
+					OFGatePneuValveVibratorMode = FALSE;	// Stop SUPER Vibrating
 					OFGatePneuValve	= FALSE;			// Close the gate
 					OFEngagePneuValve = FALSE;
 					OFOpenPneuValve = FALSE;
@@ -2550,9 +2721,9 @@ void Timer0IntHandler(void)
 				VFVibEngagePneuValve = FALSE;
 				VFVibrator = FALSE;
 				OFModMode = FALSE;
-				OFInitting = FALSE;
 				if(!VFVibEngagePneuRetSensor)
 				{
+					OFInitting = FALSE;
 					//OFGatePneuFilled = FALSE;
 					if(!OFSbsMode)
 						OFModuleStep = 0;
@@ -2588,6 +2759,13 @@ void Timer0IntHandler(void)
 	if(OFVacuumValveDelayCounter)
 		OFVacuumValveDelayCounter--;
 
+	if(OFRequestFillingDelayCounter)
+	{
+		OFRequestFillingDelayCounter--;
+		if(!OFRequestFillingDelayCounter)
+			OFRequestFilling = TRUE;
+	}
+
 	if(OFInittingTOCounter)
 	{
 		OFInittingTOCounter--;
@@ -2598,37 +2776,107 @@ void Timer0IntHandler(void)
 			{
 				case 0:
 					if(OFGatePneuRetSensor)
-						OFInitError += 1;
+						OFInitError |= 1;
 					if(OFEngagePneuRetSensor)
-						OFInitError += 2;
+						OFInitError |= 2;
 					if(OFOpenPneuRRetSensor)
-						OFInitError += 4;
+						OFInitError |= 4;
 					if(OFOpenPneuLRetSensor)
-						OFInitError += 8;
+						OFInitError |= 8;
 					if(VFVibEngagePneuRetSensor)
-						OFInitError += 16;
+						OFInitError |= 16;
+
+					if(!OFGatePneuExtSensor)
+						OFInitError |= 512;
+					if(!OFEngagePneuExtSensor)
+						OFInitError |= 32;
+					if(!OFOpenPneuRExtSensor)
+						OFInitError |= 64;
+					if(!OFOpenPneuLExtSensor)
+						OFInitError |= 128;
+					if(!VFVibEngagePneuExtSensor)
+						OFInitError |= 256;
 					break;
 				case 1:
 					if(OFEngagePneuExtSensor)
-						OFInitError += 32;
+						OFInitError |= 32;
 					if(OFOpenPneuRExtSensor)
-						OFInitError += 64;
+						OFInitError |= 64;
 					if(OFOpenPneuLExtSensor)
-						OFInitError += 128;
+						OFInitError |= 128;
+
+					if(!OFEngagePneuRetSensor)
+						OFInitError |= 2;
+					if(!OFOpenPneuRRetSensor)
+						OFInitError |= 4;
+					if(!OFOpenPneuLRetSensor)
+						OFInitError |= 8;
 					break;
 				case 5:
 					if(VFVibEngagePneuExtSensor)
-						OFInitError += 256;
+						OFInitError |= 256;
+
+					if(!VFVibEngagePneuRetSensor)
+						OFInitError |= 16;
 					break;
 				case 6:
 					if(OFGatePneuExtSensor)
-						OFInitError += 512;
+						OFInitError |= 512;
+
+					if(!OFGatePneuRetSensor)
+						OFInitError |= 1;
 					break;
 			}
-			OFModuleStep++;
+			if(OFModuleStep >= 9)
+				OFModuleStep++;
+			else
+			{
+				OFModuleStep = 0;
+				OFInitting = FALSE;
+			}
 		}
 	}
-
+	// OF Gate Valve
+	if(OFGatePneuValveDelayCounter)
+	{
+		OFGatePneuValveDelayCounter--;
+		if(!OFGatePneuValveDelayCounter)
+		{
+			OFGatePneuValve = TRUE;	// Engaging
+			OFGatePneuValveVibDelayCounter = OFGatePneuValveVibDelay + 1;
+		}
+	}
+	if(OFGatePneuValveVibDelayCounter)
+	{
+		OFGatePneuValveVibDelayCounter--;
+		if(!OFGatePneuValveVibDelayCounter)
+			OFGatePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
+	}
+	if(OFGatePneuValveVibratorMode)
+	{
+		if(OFGatePneuValveVibratorPeriodCounter)
+		{
+			OFGatePneuValveVibratorPeriodCounter--;
+			if(!OFGatePneuValveVibratorPeriodCounter)
+			{
+				if(OFGatePneuValve)
+				{
+					OFGatePneuValve = FALSE;
+					OFGatePneuValveVibratorPeriodCounter = (OFGatePneuValveVibratorPeriod * (100 - OFGatePneuValveVibratorDutyCycle)) / 100;
+				}
+				else
+				{
+					OFGatePneuValve = TRUE;
+					OFGatePneuValveVibratorPeriodCounter = (OFGatePneuValveVibratorPeriod * OFGatePneuValveVibratorDutyCycle) / 100;
+				}
+			}
+		}
+		else
+			OFGatePneuValveVibratorPeriodCounter = (OFGatePneuValveVibratorPeriod * (100 - OFGatePneuValveVibratorDutyCycle)) / 100; // Low Duty Cycle = 100% - DutyCycle
+	}
+	else
+		OFGatePneuValveVibratorPeriodCounter = (OFGatePneuValveVibratorPeriod * (100 - OFGatePneuValveVibratorDutyCycle)) / 100; // Low Duty Cycle = 100% - DutyCycle
+	// Vibrator Engage
 	if(VFVibratorEngageDelayCounter)
 	{
 		VFVibratorEngageDelayCounter--;
@@ -2676,14 +2924,15 @@ void Timer0IntHandler(void)
 		switch(SPModuleStep)
 		{
 			case 0: // Standby
-				//SPSealerPneuValve		= FALSE; 	// Sealer Opened
+				SPSealerPneuValve		= FALSE; 	// Sealer Opened
 				SPVibEngagePneuValve	= FALSE;	// Vibrator Disengaged
-				SPPusherValve			= FALSE;		// Pusher Extended
+				SPPusherValve			= FALSE;		// Pusher Retended
 				SPVibrator				= FALSE;	// Vibrator OFF
 
 				if( (MachineRunning && (!MachineStopping)) || SPInitting )
 				{
-					if( (!SPVibEngagePneuRetSensor) && (!SPSealerPneuRetSensor) && (!SPPusherPneuRetSensor))
+					if( (!SPVibEngagePneuRetSensor) && (!SPSealerPneuRetSensor) && (!SPPusherPneuRetSensor)
+							&& SPVibEngagePneuExtSensor && SPSealerPneuExtSensor && SPPusherPneuExtSensor )
 					{
 						if(!SPSbsMode)
 							SPModuleStep = 1;
@@ -2749,7 +2998,7 @@ void Timer0IntHandler(void)
 				SPVibEngagePneuValve	= TRUE;		// Start engaging
 				SPPusherValve			= FALSE;
 				SPVibrator				= FALSE;
-				if(!SPVibEngagePneuExtSensor)
+				if( (!SPVibEngagePneuExtSensor) && SPVibEngagePneuRetSensor )
 				{
 					if(!SPSbsMode)
 						SPModuleStep = 3;
@@ -2849,7 +3098,7 @@ void Timer0IntHandler(void)
 				SPVibEngagePneuValve	= FALSE;	// Vib is disengaged
 				SPPusherValve			= TRUE;		// Pusher start pushing
 				SPVibrator				= FALSE;	// Vibrator OFF
-				if(!SPPusherPneuExtSensor)
+				if( (!SPPusherPneuExtSensor) && SPPusherPneuRetSensor )
 				{
 					if(!SPSbsMode)
 						SPModuleStep = 7;
@@ -2916,19 +3165,32 @@ void Timer0IntHandler(void)
 			{
 				case 0:
 					if(SPVibEngagePneuRetSensor)
-						SPInitError += 1;
+						SPInitError |= 1;
 					if(SPSealerPneuRetSensor)
-						SPInitError += 2;
+						SPInitError |= 2;
 					if(SPPusherPneuRetSensor)
-						SPInitError += 8;
+						SPInitError |= 8;
+
+					if(!SPVibEngagePneuExtSensor)
+						SPInitError |= 16;
+					if(!SPSealerPneuExtSensor)
+						SPInitError |= 32;
+					if(!SPPusherPneuExtSensor)
+						SPInitError |= 4;
 					break;
 				case 2:
 					if(SPVibEngagePneuExtSensor)
-						SPInitError += 16;
+						SPInitError |= 16;
+
+					if(!SPVibEngagePneuRetSensor)
+						SPInitError |= 1;
 					break;
 				case 6:
 					if(SPPusherPneuExtSensor)
-						SPInitError += 4;
+						SPInitError |= 4;
+
+					if(!SPPusherPneuRetSensor)
+						SPInitError |= 8;
 					break;
 			}
 			SPModuleStep++;
@@ -3673,6 +3935,7 @@ main(void)
 
         // Turn OFF Gates when WSoloEnable just DISABLED
         if(LastWSoloEnable != WSoloEnable)
+        {
         	if(!WSoloEnable)
         	{
             	WLLrGatePneuValve = FALSE;
@@ -3684,6 +3947,7 @@ main(void)
             	WLCLWeightOK = FALSE;
             	WLCRWeightOK = FALSE;
         	}
+        }
         LastWSoloEnable = WSoloEnable;
 
         // Output to OF Module when there is request
@@ -3736,7 +4000,7 @@ main(void)
             	{
 					if( RunBtn ) // (!PINBTNRUN)
 					{
-
+						OFFastRequestFilling = FALSE;
 						TRSbsMode = FALSE;
 						GTSbsMode = FALSE;
 						OFSbsMode = FALSE;
@@ -3758,6 +4022,7 @@ main(void)
 					}
 					if( InitMON )
 					{
+						OFFastRequestFilling = FALSE;
 						Initting = TRUE;
 						TRInitting = TRUE;
 						GTInitting = TRUE;
@@ -3775,6 +4040,7 @@ main(void)
             {
                 if( StopBtn ) //|| Error)         // Motor OFF Btn/Inching pushed or Error Triggered
                 {
+                	OFFastRequestFilling = FALSE;
                 	MachineStopping = TRUE;
                 	WLLrGatePneuValve = FALSE;
 					WLSmGatePneuValve = FALSE;
@@ -3799,6 +4065,7 @@ main(void)
         {
         	if( (!TRInitting) && (!GTInitting) && (!OFInitting) && (!SPInitting) )
         	{
+        		OFFastRequestFilling = FALSE;
         		Initting = FALSE;
         		GTSA1ModuleWaiting = FALSE;
         		GTSA2ModuleWaiting = FALSE;
@@ -3816,6 +4083,7 @@ main(void)
         {
         	if( (!TRModuleStep) && (!GTModuleStep) && (!OFModuleStep) && (!SPModuleStep) )
         	{
+        		OFFastRequestFilling = FALSE;
         		MachineStopping = FALSE;
         		MachineRunning = FALSE;
             	WLLrGatePneuValve = FALSE;
@@ -3982,7 +4250,7 @@ main(void)
 			ComOUT[97] = WLCRSDAReading >> 8;
 			ComOUT[98] = WLCRSDAReading;
 
-			ComOUT[99] = GTFPushPneuValveDurationCounter / 10;
+			ComOUT[99] = GTFPushPneuValveDelayCounter / 10;
 			ComOUT[100] = UNUSED;
 
 			ComOUT[101] = LoopTime >> 8;
@@ -3991,7 +4259,7 @@ main(void)
 			ComOUT[104] = LifeDuration >> 16;
 			ComOUT[105] = LifeDuration >> 8;
 			ComOUT[106] = LifeDuration;
-			ComOUT[107] = 13;				// Program Version
+			ComOUT[107] = 14;				// Program Version
 
 			ComOUT[108] = TRInitErrorResult >> 8;
 			ComOUT[109] = TRInitErrorResult;
@@ -4005,9 +4273,37 @@ main(void)
 
             ComOUT[116] = VFVibratorEngageDelayCounter / 10;
             ComOUT[117] = VFVibratorEngageVibDelayCounter / 10;
+
+            // New Twin Weigher V1.4 MTP (Touchscreen program changed from v1.0 - v1.4)
+            ComOUT[118] = GTModuleStepTimer[0] >> 8;
+            ComOUT[119] = GTModuleStepTimer[0];
+            ComOUT[120] = GTModuleStepTimer[1] >> 8;
+            ComOUT[121] = GTModuleStepTimer[1];
+            ComOUT[122] = GTModuleStepTimer[2] >> 8;
+            ComOUT[123] = GTModuleStepTimer[2];
+            ComOUT[124] = GTModuleStepTimer[3] >> 8;
+            ComOUT[125] = GTModuleStepTimer[3];
+            ComOUT[126] = GTModuleStepTimer[4] >> 8;
+            ComOUT[127] = GTModuleStepTimer[4];
+            ComOUT[128] = GTModuleStepTimer[5] >> 8;
+            ComOUT[129] = GTModuleStepTimer[5];
+            ComOUT[130] = GTModuleStepTimer[6] >> 8;
+            ComOUT[131] = GTModuleStepTimer[6];
+            ComOUT[132] = GTModuleStepTimer[7] >> 8;
+            ComOUT[133] = GTModuleStepTimer[7];
+            ComOUT[134] = GTModuleStepTimer[8] >> 8;
+            ComOUT[135] = GTModuleStepTimer[8];
+            ComOUT[136] = GTModuleStepTimer[9] >> 8;
+            ComOUT[137] = GTModuleStepTimer[9];
+
+            ComOUT[138] = (GTModuleStepTimer[0] + GTModuleStepTimer[1] + GTModuleStepTimer[2] + GTModuleStepTimer[3] + GTModuleStepTimer[4] + GTModuleStepTimer[5] + GTModuleStepTimer[6] + GTModuleStepTimer[7] + GTModuleStepTimer[8] + GTModuleStepTimer[9]) >> 8;
+            ComOUT[139] = GTModuleStepTimer[0] + GTModuleStepTimer[1] + GTModuleStepTimer[2] + GTModuleStepTimer[3] + GTModuleStepTimer[4] + GTModuleStepTimer[5] + GTModuleStepTimer[6] + GTModuleStepTimer[7] + GTModuleStepTimer[8] + GTModuleStepTimer[9];
+            ComOUT[140] = GTRequestFillingDelayCounter / 10;
+            ComOUT[141] = OFGatePneuValveVibDelayCounter / 10;
+            ComOUT[142] = OFRequestFillingDelayCounter / 10;
             // OUT : END
-            ComOUT[128] = 0x0F;
-            ComOUT[129] = 0x0F;
+            ComOUT[148] = 0x0F;
+            ComOUT[149] = 0x0F;
             DataReady = TRUE;
         }
 
