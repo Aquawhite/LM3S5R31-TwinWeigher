@@ -2026,9 +2026,9 @@ void Timer0IntHandler(void)
 				{
 					GTOutFillOpenPneuValve = FALSE;
 					GTOutFillGripPneuValve = FALSE;	// Grip Closed
-					if( (!GTFirstCycle) && (!GTRequestFilling) )					// WARNING NEW
-						if(!GTRequestFillingDelayCounter)
-							GTRequestFillingDelayCounter = GTRequestFillingDelay;
+					//if( (!GTFirstCycle) && (!GTRequestFilling) )					// WARNING NEW
+					//	if(!GTRequestFillingDelayCounter)
+					//		GTRequestFillingDelayCounter = GTRequestFillingDelay;
 				}
 
 				if(((!GTOutFillGripPneuLRetSensor) && (!GTOutFillGripPneuRRetSensor) && TRModuleWaiting/*&& (GTFPushPneuValve || GTInitting)*/) || MachineStopping)
@@ -2151,8 +2151,8 @@ void Timer0IntHandler(void)
 
 				// SA 2 // Request Filling and wait till Filling finished
 				// Skip Filling if First Cycle
-				//if(!GTFirstCycle)
-				//	GTRequestFilling = TRUE;
+				if(!GTFirstCycle)
+					GTRequestFilling = TRUE;
 
 				if(!GTSbsMode)
 					GTModuleStep = 5;
@@ -2305,12 +2305,12 @@ void Timer0IntHandler(void)
 	if(GTBothOpenGripDelayCounter)
 		GTBothOpenGripDelayCounter--;
 
-	if(GTRequestFillingDelayCounter)
-	{
-		GTRequestFillingDelayCounter--;
-		if(!GTRequestFillingDelayCounter)
-			GTRequestFilling = TRUE;
-	}
+	//if(GTRequestFillingDelayCounter)
+	//{
+	//	GTRequestFillingDelayCounter--;
+	//	if(!GTRequestFillingDelayCounter)
+	//		GTRequestFilling = TRUE;
+	//}
 
 	if(GTInittingTOCounter)
 	{
@@ -2586,7 +2586,7 @@ void Timer0IntHandler(void)
 						VFVibEngagePneuValve = TRUE;	// Used for Initting purpose
 					VFVibrator = FALSE;
 
-					if( (!OFRequestFilling) && (!OFRequestFillingDelayCounter) )
+					/*if( (!OFRequestFilling) && (!OFRequestFillingDelayCounter) )
 					{
 						// if weight is already OK before checking, then OPEN faster
 						if(WLCLWeightOK || WLCRWeightOK)
@@ -2596,7 +2596,7 @@ void Timer0IntHandler(void)
 							VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
 							OFFastRequestFilling = TRUE;
 						}
-					}
+					}*/
 					if( (!OFGatePneuExtSensor) && OFGatePneuRetSensor )
 					{
 						if(OFGatePneuValveVibratorFrequency)	// Set Frequency = 0 for make it inactive
@@ -2634,7 +2634,7 @@ void Timer0IntHandler(void)
 				}
 				// if the weigher was ready sooner, then OFRequestSooner
 				// BUT if the weight was not OK, then wait till weight OK
-				if(OFFastRequestFilling)
+				/*if(OFFastRequestFilling)
 				{
 					OFFastRequestFilling = FALSE;
 					if(!OFSbsMode)
@@ -2656,18 +2656,19 @@ void Timer0IntHandler(void)
 						else
 							OFSbsMode = FALSE;
 					}
+				}*/
+
+				if(WLCLWeightOK || WLCRWeightOK)
+				{
+					OFRequestFilling = TRUE;
+					VFVibrator = TRUE;				// Start Vibrating
+					VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
+					VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
+					if(!OFSbsMode)
+						OFModuleStep = 8;
+					else
+						OFSbsMode = FALSE;
 				}
-				//if(WLCLWeightOK || WLCRWeightOK)
-				//{
-				//	OFRequestFilling = TRUE;
-				//	VFVibrator = TRUE;				// Start Vibrating
-				//	VFVibratorEngageDelayCounter = VFVibratorEngageDelay + 1;
-					//VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
-					//if(!OFSbsMode)
-					//	OFModuleStep = 8;
-					//else
-					//	OFSbsMode = FALSE;
-				//}
 				break;
 			case 8:	// Close the gate after finished & Stop Vibrating, tell GT to continue
 				if( (!OFRequestFilling) && (!OFGatePneuValveDurationCounter) && (!WLOpGatePneuDurationCounter) && (!WROpGatePneuDurationCounter) )
@@ -2759,12 +2760,12 @@ void Timer0IntHandler(void)
 	if(OFVacuumValveDelayCounter)
 		OFVacuumValveDelayCounter--;
 
-	if(OFRequestFillingDelayCounter)
-	{
-		OFRequestFillingDelayCounter--;
-		if(!OFRequestFillingDelayCounter)
-			OFRequestFilling = TRUE;
-	}
+	//if(OFRequestFillingDelayCounter)
+	//{
+	//	OFRequestFillingDelayCounter--;
+	//	if(!OFRequestFillingDelayCounter)
+	//		OFRequestFilling = TRUE;
+	//}
 
 	if(OFInittingTOCounter)
 	{
