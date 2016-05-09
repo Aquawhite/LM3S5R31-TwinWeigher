@@ -1,3 +1,4 @@
+//V1.2		Add TRModuleWaitingPick to make the TR Flow more naturally
 //V1.1      17 March 2016 , trying to build initialization program
 //V1.0		FEB 2016
 // 			Every mm is 0.01mm per unit (eg. RTServoPosmm = 100 means 1mm)
@@ -26,6 +27,7 @@
 #define BACKWARD 0
 
 #define UNUSED 0
+#define FASTBUFFER 7
 
 //*****************************************************************************
 // Defines for the pins that are used in the device
@@ -146,11 +148,11 @@
 #define PIN_TR_REOPNEU_RETSENS_PIN		GPIO_PIN_2
 #define PIN_TR_REOPNEU_EXTSENS_BASE		GPIO_PORTH_BASE
 #define PIN_TR_REOPNEU_EXTSENS_PIN		GPIO_PIN_3
-#define PIN_DATECODE_SENSOR_BASE			GPIO_PORTH_BASE				//Used for checking position
-#define PIN_DATECODE_SENSOR_PIN				GPIO_PIN_4
-#define PIN_EXSENS2_BASE					GPIO_PORTH_BASE				//VLVROLL
+#define PIN_IT_RMATEMPTY_SENS_BASE			GPIO_PORTH_BASE
+#define PIN_IT_RMATEMPTY_SENS_PIN			GPIO_PIN_4
+#define PIN_EXSENS2_BASE					GPIO_PORTH_BASE
 #define PIN_EXSENS2_PIN						GPIO_PIN_5
-#define PIN_EXSENS1_BASE					GPIO_PORTH_BASE				//VLVBLOW
+#define PIN_EXSENS1_BASE					GPIO_PORTH_BASE
 #define PIN_EXSENS1_PIN						GPIO_PIN_6
 #define PORT_TR_VACUUM_BASE		GPIO_PORTH_BASE
 #define PORT_TR_VACUUM_PIN		GPIO_PIN_7
@@ -204,12 +206,13 @@ unsigned char TransferIdle = FALSE, ReceiveIdle = FALSE;
 unsigned int  IntTXCounter = 0, IntRXCounter = 0;
 unsigned long int DataTimerCounter = 0;
 unsigned int  UARTTimeOut = UARTDISABLEDCOUNT, UARTDisabledCounter = 0;
+unsigned int SPIFirstCycleDurationCounter;
 
 unsigned char SlavePortA, SlavePortB, SlavePortC, SlavePortD;
 unsigned char SlavePortE, SlavePortF, SlavePortG, SlavePortH;
 unsigned char SlavePortI, SlavePortJ;
 
-tBoolean blinkFlag = FALSE, ComFlag;
+unsigned char BlinkFlag = FALSE, ComFlag;
 unsigned char BlinkCom;
 unsigned int blinkON, blinkOFF;
 
@@ -224,7 +227,7 @@ unsigned char SPIDataLock, SPIDataReady, SPIReiterationMode;                    
 unsigned char SPIHeaterON1, SPIHeaterON2, SPIHeaterON3, SPIHeaterON4;
 unsigned char SPIInTEST, SPIOutTEST, SPIStartTimer = 250;
 unsigned int  SPITimerCounter = 0;
-unsigned char SPIComErrorFlag, SPIComError;
+unsigned char SPIComErrorFlag = TRUE, SPIComError;
 unsigned int  SPIComErrorCounter;
 unsigned char SPITransmitted = FALSE;
 /* Timer Variables */
@@ -235,13 +238,15 @@ unsigned int LoopCycle, LoopTime;
 
 /* Infeed Table Module */
 unsigned int ITTrayPosLeftSensor, ITTrayPosRightSensor, ITTrayElevationMaxSensor, ITTrayElevationMinSensor;
-unsigned int ITMaterialAvailableSensor, ITMaterialAvailableSensor2;
+unsigned int ITLeftMaterialAvailableSensor, ITRightMaterialAvailableSensor;
+unsigned int ITLeftMaterialNotAvailableSensor = 100, ITRightMaterialNotAvailableSensor = 100;
 
 unsigned char ITMotorTrayElevator, ITMotorTrayElevatorMON, ITMotorTrayElevatorDir, ITMotorTrayElevatorDirMON;
 unsigned char ITValveTrayPos, ITValveTrayPosMON;
 
 unsigned char ITEnable, ITMotorTrayElevatorDirSet, ITReady, ITSwitchTrayStep;
 unsigned char DirUP, DirDOWN;
+unsigned char ITOverride;
 
 /* Transfer & Reorient Module */
 unsigned int TRExtenderPneuExtSensor, TRExtenderPneuRetSensor, TRReorientPneuExtSensor;
@@ -249,9 +254,10 @@ unsigned int TRReorientPneuRetSensor, TRVacuumSensor;
 
 unsigned char TRExtenderPneuValve, TRExtenderPneuValveMON, TRReorientPneuValve,	TRReorientPneuValveMON;
 unsigned char TRVacuumValve, TRVacuumValveMON, TRFoilPusherValve, TRFoilPusherValveMON;
-unsigned char TRModuleStep, TRModuleWaiting;
+unsigned char TRModuleStep, TRModuleWaiting, TRModuleWaitingPick;
 unsigned int TRVacuumValveDelay, TRVacuumValveDelayCounter;
 unsigned char TRSbsMON, LastTRSbsMON, TRModMON, LastTRModMON;
+unsigned char IgnoreTRVacuumSensor, TRVacuumSensorErrorCounter;
 
 /* Grip & Transfer */
 unsigned int GTInFillGripPneuLRetSensor, GTInFillGripPneuRRetSensor, GTOutFillOpenPneuLRetSensor;
@@ -287,6 +293,9 @@ unsigned char OFModuleStep, OFModuleWaiting;
 unsigned char OFSbsMON, LastOFSbsMON, OFModMON, LastOFModMON;
 
 unsigned char OFRequestFilling;
+unsigned char VFVibEngagePneuValveVibratorMode;
+unsigned long int VFVibEngageVibratorPeriod, VFVibEngageVibratorPeriodCounter;
+unsigned long int VFVibEngageVibratorFrequency, VFVibEngageVibratorDutyCycle;
 
 /* Sealing Module & Vibrator Sealer Module */
 unsigned int SPSealerPneuRetSensor, SPSealerPneuExtSensor, SPVibEngagePneuRetSensor, SPVibEngagePneuExtSensor;
@@ -333,11 +342,20 @@ unsigned char WLCLOnZeroingBtn, WLCROnZeroingBtn, WLCLWeightOK, WLCRWeightOK;
 unsigned char WLCLWeightOKFlag, WLCRWeightOKFlag, WLCLWeightOKCounter, WLCRWeightOKCounter;
 
 signed long int WLCLTempReading, WLCLSDAReadingNormalised, WLCRTempReading, WLCRSDAReadingNormalised;
+unsigned char WZeroMON, WLCLZeroMONFlag, WLCRZeroMONFlag;
+unsigned int WLCLZeroDelayCounter, WLCRZeroDelayCounter;
 unsigned char i;
+
+unsigned char WSoloEnable, LastWSoloEnable, WSoloOpenGate;
 
 /* External Heater Module */
 unsigned int HeaterErrorCounter, HeaterErrorMsgDuration;
 unsigned char HeaterError, HeaterErrorMsg;
+
+/* Auxiliaries */
+unsigned char TowerLightGreen, TowerLightYellow, TowerLightRed;
+unsigned char LastTRModuleStep, LastGTModuleStep, LastOFModuleStep, LastSPModuleStep;
+unsigned int TRModuleStepCounter, GTModuleStepCounter, OFModuleStepCounter, SPModuleStepCounter;
 //*****************************************************************************
 // Interrupt handler for the SSI0 interrupt
 //*****************************************************************************
@@ -391,13 +409,18 @@ void IntSSI0(void)
 
 	if(SPICounter >= 25)                              // SPI Communication has read all the frame successfully
 	{
+		if(SPIComErrorFlag)		// First Cycle After SPI Transmission Succeeded
+		{
+			SPIFirstCycleDurationCounter = 1000;
+		}
 		SPIComErrorFlag = FALSE;
 
 		ITTrayPosLeftSensor =        	SPIIn[3] % 2;
 		ITTrayPosRightSensor =       	(SPIIn[3] >> 1) % 2;
 		ITTrayElevationMaxSensor =      (SPIIn[3] >> 2) % 2;
 		ITTrayElevationMinSensor =      (SPIIn[3] >> 3) % 2;
-		ITMaterialAvailableSensor =     (SPIIn[3] >> 4) % 2;
+		ITLeftMaterialAvailableSensor = (SPIIn[3] >> 4) % 2;	// Active High From Slave
+		ITLeftMaterialNotAvailableSensor = (SPIIn[3] >> 5) % 2;
 
 		GTInFillGripPneuLRetSensor 	=   SPIIn[4] % 2;
 		GTInFillGripPneuRRetSensor 	=   (SPIIn[4] >> 1) % 2;
@@ -552,7 +575,11 @@ void UART0IntHandler(void)
 	                    {
 	                    	ITEnable = 					ComIN[9] % 2;
 	                    	ITMotorTrayElevatorDirSet =	(ComIN[9] >> 1) % 2;
+	                    	WSoloEnable =				(ComIN[9] >> 2) % 2;
+	                    	WZeroMON =					(ComIN[9] >> 3) % 2;
 	                    	IgnoreAirError =			(ComIN[9] >> 4) % 2;
+	                    	IgnoreTRVacuumSensor = 		(ComIN[9] >> 5) % 2;
+	                    	ITOverride = 				(ComIN[9] >> 6) % 2;
 	                    	if( LastInitMON != ((ComIN[9] >> 7) % 2) )
 								InitMON =		(ComIN[9] >> 7) % 2;
 							LastInitMON = (ComIN[9] >> 7) % 2;
@@ -635,13 +662,13 @@ void UART0IntHandler(void)
 	                case 18:
 	                    if(ComAddress == 1)
 	                    {
-	                    	WLOpGatePneuDuration = ComIN[18] * 10;
+	                    	WLOpGatePneuDuration = ComIN[18] * 100;
 	                    }
 	                    break;
 	                case 19:
 	                    if(ComAddress == 1)
 	                    {
-	                    	WROpGatePneuDuration = ComIN[19] * 10;
+	                    	WROpGatePneuDuration = ComIN[19] * 100;
 	                    }
 	                    break;
 	                case 20:
@@ -754,6 +781,35 @@ void UART0IntHandler(void)
 	                    		BufferSensor = (ComIN[53] << 8) + ComIN[54];
 	                    	else
 	                    		BufferSensor = 120;
+	                    }
+	                    break;
+	                case 55:
+	                    if(ComAddress == 1)
+	                    {
+	                    	VFVibEngageVibratorFrequency = ComIN[55];
+	                    	if(VFVibEngageVibratorFrequency)
+	                    		VFVibEngageVibratorPeriod = 10000 / VFVibEngageVibratorFrequency; // 1 (0.1hz) = 10000 ms
+	                    	else
+	                    		VFVibEngageVibratorPeriod = 0;		// Means DISACTIVATE VIBRATION MODE
+	                    }
+	                    break;
+	                case 56:
+	                    if(ComAddress == 1)
+	                    {
+	                    	if(ComIN[56])
+	                    		VFVibEngageVibratorDutyCycle = ComIN[56];
+	                    	else
+	                    		VFVibEngageVibratorDutyCycle = 50;
+	                    }
+	                    break;
+	                case 57:
+	                    if(ComAddress == 1)
+	                    {
+	                    	if( (!WLOpGatePneuDurationCounter) && (!WROpGatePneuDurationCounter) )
+	                    		WSoloOpenGate = ComIN[57] % 2;
+	                    	else
+	                    		WSoloOpenGate = FALSE;
+	                    	//ITMotorTrayElevatorDirSet =	(ComIN[9] >> 1) % 2;
 	                    }
 	                    break;
 	                case 90:	// case 90 - 98 is for Direct PORTOUT  PORTA = 90, PORTJ = 98
@@ -875,6 +931,105 @@ void Timer0IntHandler(void)
 
     LoopTime = LoopCycle;
     LoopCycle = 0;
+
+    // ITValvePos Initialization to avoid crash
+    if(SPIFirstCycleDurationCounter)
+    {
+    	SPIFirstCycleDurationCounter--;
+    	if(!ITTrayPosLeftSensor)
+    		ITValveTrayPos = TRUE;
+    	if(!ITTrayPosRightSensor)
+    		ITValveTrayPos = FALSE;
+    }
+    // ZEROING WEIGHER
+    if( WZeroMON && (!MachineRunning) && (!Initting) )
+    {
+    	if( (!WLCLZeroMONFlag) && (!WLCRZeroMONFlag) )
+    	{
+    		WLCLZeroMONFlag = TRUE;
+    		WLCRZeroMONFlag = TRUE;
+			WLOpGatePneuDurationCounter = WLOpGatePneuDuration;
+			WROpGatePneuDurationCounter = WROpGatePneuDuration;
+    	}
+    }
+    // Tower Light Subroutine
+    // Machine Running :
+    // Green if machine active and steps keep running
+    // Blinking Yellow if Machine Stopping OR the Steps are stuck somewhere
+    // Machine Not Running :
+    // Yellow if machine is okay, just waiting to be run
+    // Blinking Red if there are errors
+    if(MachineRunning)
+    {
+    	if( (!TRModuleStepCounter) && (!GTModuleStepCounter) &&
+    			(!OFModuleStepCounter) && (!SPModuleStepCounter) )
+    	{
+    		TowerLightGreen = FALSE;
+    		TowerLightYellow = BlinkFlag;
+    	}
+    	else if( MachineStopping )
+    	{
+    		TowerLightGreen = FALSE;
+    		TowerLightYellow = BlinkFlag;
+    	}
+    	else
+    	{
+    		TowerLightGreen = TRUE;
+    		TowerLightYellow = FALSE;
+    	}
+    }
+    else
+    {
+    	TowerLightGreen = FALSE;
+    	if(Error || FatalError)
+    	{
+    		TowerLightYellow = FALSE;
+    		TowerLightRed = BlinkFlag;
+    	}
+    	else
+    	{
+    		TowerLightYellow = TRUE;
+    		TowerLightRed = FALSE;
+    	}
+    }
+
+    // if EVERY module step got stuck for 5 seconds, then the yellow light will start blinking
+    // Meaning 1. out of product 2. out of foil 3. Sensors not responding
+    if(LastTRModuleStep == TRModuleStep)
+    {
+    	if(TRModuleStepCounter)
+    		TRModuleStepCounter--;
+    }
+    else
+    	TRModuleStepCounter = 5000;
+    LastTRModuleStep = TRModuleStep;
+
+    if(LastGTModuleStep == GTModuleStep)
+    {
+    	if(GTModuleStepCounter)
+    		GTModuleStepCounter--;
+    }
+    else
+    	GTModuleStepCounter = 5000;
+    LastGTModuleStep = GTModuleStep;
+
+    if(LastOFModuleStep == OFModuleStep)
+    {
+    	if(OFModuleStepCounter)
+    		OFModuleStepCounter--;
+    }
+    else
+    	OFModuleStepCounter = 5000;
+    LastOFModuleStep = OFModuleStep;
+
+    if(LastSPModuleStep == SPModuleStep)
+    {
+    	if(SPModuleStepCounter)
+    		SPModuleStepCounter--;
+    }
+    else
+    	SPModuleStepCounter = 5000;
+    LastSPModuleStep = SPModuleStep;
 
     // STEP BY STEP MODE
 	//StepbyStepMode SBSMode
@@ -1082,7 +1237,7 @@ void Timer0IntHandler(void)
 	    	// SP Module
 			ROM_GPIOPinWrite(PORT_SP_SEALERPNEU_VALVE_BASE, PORT_SP_SEALERPNEU_VALVE_PIN, 0);
 			SPVibEngagePneuValve = FALSE;
-			SPPusherValve = FALSE;
+			SPPusherValve = TRUE;
 			SPVibrator = FALSE;
 
 			// W Module
@@ -1194,6 +1349,19 @@ void Timer0IntHandler(void)
     if(LastStopBtn != !ROM_GPIOPinRead(PIN_BTN_STOP_BASE, PIN_BTN_STOP_PIN))
     	StopBtn = !ROM_GPIOPinRead(PIN_BTN_STOP_BASE, PIN_BTN_STOP_PIN);
     LastStopBtn = !ROM_GPIOPinRead(PIN_BTN_STOP_BASE, PIN_BTN_STOP_PIN);
+    // Infeed Table
+	if(ROM_GPIOPinRead(PIN_IT_RMATEMPTY_SENS_BASE, PIN_IT_RMATEMPTY_SENS_PIN))
+	{
+		if(ITRightMaterialAvailableSensor)
+			ITRightMaterialAvailableSensor--;
+		ITRightMaterialNotAvailableSensor = 100;
+	}
+	else
+	{
+		if(ITRightMaterialNotAvailableSensor)
+			ITRightMaterialNotAvailableSensor--;
+		ITRightMaterialAvailableSensor = FASTBUFFER;
+	}
 	// Transfer & Reorient
 	if(!ROM_GPIOPinRead(PIN_TR_EXTPNEU_EXTSENS_BASE, PIN_TR_EXTPNEU_EXTSENS_PIN))
 	{
@@ -1223,7 +1391,7 @@ void Timer0IntHandler(void)
 	}
 	else
 		TRReorientPneuRetSensor = BufferSensor;
-	if(!ROM_GPIOPinRead(PIN_TR_VACUUM_SENS_BASE, PIN_TR_VACUUM_SENS_PIN))
+	if(ROM_GPIOPinRead(PIN_TR_VACUUM_SENS_BASE, PIN_TR_VACUUM_SENS_PIN))	// Active high
 	{
 		if(TRVacuumSensor)
 			TRVacuumSensor--;
@@ -1331,14 +1499,14 @@ void Timer0IntHandler(void)
 		RHopperSensor = BufferSensor;
 
     /* Coiling to PIN */
-    if(blinkFlag)
+    if(BlinkFlag)
     {
         if(blinkON)
             blinkON--;
         else
         {
-            blinkOFF = 400;
-            blinkFlag = FALSE;
+            blinkOFF = 700;
+            BlinkFlag = FALSE;
         }
 
     }
@@ -1348,37 +1516,79 @@ void Timer0IntHandler(void)
             blinkOFF--;
         else
         {
-            blinkON = 400;
-            blinkFlag = TRUE;
+            blinkON = 700;
+            BlinkFlag = TRUE;
         }
     }
 
 	/* Infeed Table Module v */
     // IT = Infeed Table
-    if(ITEnable || MachineRunning)
+    if(ITEnable && (!SPIComErrorFlag))
     {
     	if(!ITSwitchTrayStep)
     	{
-			//Check if material available on current condition
-			if(!ITMaterialAvailableSensor)
-			{
-				// if material is sensed
-				ITReady = TRUE;
-				ITMotorTrayElevator = FALSE;
-			}
-			else
-			{
-				ITReady = FALSE;
-				if(ITTrayElevationMaxSensor)	// if position not max
+    		// Check if there are any foil at all at any of the tray
+    		if( (!ITLeftMaterialNotAvailableSensor) && (!ITRightMaterialNotAvailableSensor) )
+    		{
+
+    		}
+    		// Check if there are any foil at all at any of the tray
+    		else if( (ITTrayPosLeftSensor) && (ITTrayPosRightSensor) )
+    		{
+
+    		}
+    		else
+    		{
+    			// Checkposition of the active tray, Left or Right
+				if(!ITTrayPosLeftSensor)
 				{
-					ITMotorTrayElevatorDir = DirUP;
-					ITMotorTrayElevator = TRUE;
+					// Check if the foil is available and on the correct place
+					if( (!ITLeftMaterialAvailableSensor) && (!ITTrayElevationMaxSensor) )
+					{
+						// if material is sensed
+						ITReady = TRUE;
+						ITMotorTrayElevator = FALSE;
+					}
+					else
+					{
+						ITReady = FALSE;
+						if(!ITLeftMaterialNotAvailableSensor)	// if foil is empty, Switch Tray
+							ITSwitchTrayStep = 1;
+						else
+						{
+							if(ITTrayElevationMaxSensor)// if foil is available but not at the position
+							{
+								ITMotorTrayElevatorDir = DirUP;
+								ITMotorTrayElevator = TRUE;
+							}
+						}
+					}
 				}
-				else
+				else if(!ITTrayPosRightSensor)
 				{
-					ITSwitchTrayStep = 1;
+					// Check if the foil is available and on the correct place
+					if( (!ITRightMaterialAvailableSensor) && (!ITTrayElevationMaxSensor) )
+					{
+						// if material is sensed
+						ITReady = TRUE;
+						ITMotorTrayElevator = FALSE;
+					}
+					else
+					{
+						ITReady = FALSE;
+						if(!ITRightMaterialNotAvailableSensor)	// if foil is empty, Switch Tray
+							ITSwitchTrayStep = 1;
+						else
+						{
+							if(ITTrayElevationMaxSensor)// if foil is available but not at the position
+							{
+								ITMotorTrayElevatorDir = DirUP;
+								ITMotorTrayElevator = TRUE;
+							}
+						}
+					}
 				}
-			}
+    		}
     	}
     	else
     	{
@@ -1397,27 +1607,30 @@ void Timer0IntHandler(void)
     				if(!ITTrayPosLeftSensor)
     				{
     					if(!ITTrayElevationMinSensor)
-    						ITValveTrayPos = TRUE;
+    						ITValveTrayPos = FALSE;
     					ITSwitchTrayStep = 3;
     				}
-    				if(!ITTrayPosRightSensor)
+    				else if(!ITTrayPosRightSensor)
     				{
     					if(!ITTrayElevationMinSensor)
-    						ITValveTrayPos = FALSE;
+    						ITValveTrayPos = TRUE;
     					ITSwitchTrayStep = 3;
     				}
     				break;
     			case 3:
-    				if(ITValveTrayPos)
+    				if(!ITValveTrayPos)
     					if(!ITTrayPosRightSensor)
     						ITSwitchTrayStep = 0;
-    				if(!ITValveTrayPos)
+    				if(ITValveTrayPos)
     					if(!ITTrayPosLeftSensor)
     						ITSwitchTrayStep = 0;
     				break;
     		}
     	}
     }
+    // Turn Off motor when ITEnable OFF
+    if( (!ITEnable) && (!ServiceMode) )
+    	ITMotorTrayElevator = FALSE;
 
 	/* Transfer & Reorient Module v */
     if(MachineRunning || TRSbsMode || TRModMode || TRInitting)
@@ -1442,7 +1655,7 @@ void Timer0IntHandler(void)
 						if(TRInittingTOCounter)
 						{
 							TRInittingTOCounter = 0;
-							TRInitError -= 1;
+							//TRInitError -= 1;
 						}
 					}
 					else
@@ -1452,40 +1665,45 @@ void Timer0IntHandler(void)
 							if(!TRInittingTOCounter)
 							{
 								TRInittingTOCounter = InittingTO;
-								TRInitError += 1;
+								//TRInitError += 1;
 							}
 						}
 					}
 				}
 				break;
 			case 1:	// Extend the Extender Pneu , about to get foil
-				if(ITReady || TRInitting)
+				if(MachineStopping)
+					TRModuleStep = 0;
+				else
 				{
-					TRExtenderPneuValve = TRUE;		// get vacuum to touch foil
-					TRReorientPneuValve = FALSE;
-					TRVacuumValve		= FALSE;
-					//TRFoilPusherValve	= TRUE;
-					if(!TRExtenderPneuExtSensor)
+					if( ((!TRModuleWaitingPick) && ITReady) || TRInitting || ITOverride)
 					{
-						if(!TRSbsMode)
-							TRModuleStep = 2;
-						else
-							TRSbsMode = FALSE;
+						TRExtenderPneuValve = TRUE;		// get vacuum to touch foil
+						TRReorientPneuValve = FALSE;
+						TRVacuumValve		= FALSE;
+						//TRFoilPusherValve	= TRUE;
+						if(!TRExtenderPneuExtSensor)
+						{
+							if(!TRSbsMode)
+								TRModuleStep = 2;
+							else
+								TRSbsMode = FALSE;
 
-						if(TRInittingTOCounter)
-						{
-							TRInittingTOCounter = 0;
-							TRInitError -= 2;
-						}
-					}
-					else
-					{
-						if(TRInitting)
-						{
-							if(!TRInittingTOCounter)
+							if(TRInittingTOCounter)
 							{
-								TRInittingTOCounter = InittingTO;
-								TRInitError += 2;
+								TRInittingTOCounter = 0;
+								//TRInitError -= 2;
+							}
+						}
+						else
+						{
+							if(TRInitting)
+							{
+								if(!TRInittingTOCounter)
+								{
+									TRInittingTOCounter = InittingTO;
+									//TRInitError += 2;
+								}
 							}
 						}
 					}
@@ -1494,7 +1712,8 @@ void Timer0IntHandler(void)
 			case 2:	// Vacuum ON and TRFoilPusher retracts, vacuum the foil
 				TRExtenderPneuValve = TRUE;
 				TRReorientPneuValve = FALSE;
-				TRVacuumValve		= TRUE;
+				if(!TRInitting)
+					TRVacuumValve		= TRUE;
 				//TRFoilPusherValve	= FALSE;
 				if(!TRVacuumValveDelayCounter)
 				{
@@ -1512,19 +1731,29 @@ void Timer0IntHandler(void)
 				{
 					TRExtenderPneuValve = FALSE;
 					TRReorientPneuValve = FALSE;
-					TRVacuumValve		= TRUE;
+					if(!TRInitting)
+						TRVacuumValve		= TRUE;
 					//TRFoilPusherValve	= FALSE;
 					if(!TRExtenderPneuRetSensor)
 					{
-						if(!TRSbsMode)
-							TRModuleStep = 4;
-						else
-							TRSbsMode = FALSE;
-
+						// Check if vacuumed correctly
+						if((!TRVacuumSensor) || IgnoreTRVacuumSensor || TRInitting || MachineStopping)
+						{
+							TRVacuumSensorErrorCounter = 0;
+							if(!TRSbsMode)
+								TRModuleStep = 4;
+							else
+								TRSbsMode = FALSE;
+						}
+						else	// if vacuum not correctly, repeat from TRModuleStep 0
+						{
+							TRModuleStep = 0;
+							TRVacuumSensorErrorCounter += 1;
+						}
 						if(TRInittingTOCounter)
 						{
 							TRInittingTOCounter = 0;
-							TRInitError -= 4;
+							//TRInitError -= 4;
 						}
 					}
 					else
@@ -1534,7 +1763,7 @@ void Timer0IntHandler(void)
 							if(!TRInittingTOCounter)
 							{
 								TRInittingTOCounter = InittingTO;
-								TRInitError += 4;
+								//TRInitError += 4;
 							}
 						}
 					}
@@ -1557,7 +1786,7 @@ void Timer0IntHandler(void)
 					if(TRInittingTOCounter)
 					{
 						TRInittingTOCounter = 0;
-						TRInitError -= 8;
+						//TRInitError -= 8;
 					}
 				}
 				else
@@ -1567,14 +1796,17 @@ void Timer0IntHandler(void)
 						if(!TRInittingTOCounter)
 						{
 							TRInittingTOCounter = InittingTO;
-							TRInitError += 8;
+							//TRInitError += 8;
 						}
 					}
 				}
 				break;
 			case 5: //	Waiting for in-fill gripper to take over foil
 				if( (!TRModuleWaiting) || MachineStopping || TRInitting)
+				{
 					TRModuleStep = 6;
+					TRModuleWaitingPick = TRUE;
+				}
 				break;
 			case 6:	// Shut down vacuum before moving
 				TRExtenderPneuValve = FALSE;
@@ -1611,7 +1843,26 @@ void Timer0IntHandler(void)
 	{
 		TRInittingTOCounter--;
 		if(!TRInittingTOCounter)
+		{
+			// TR Init Error Identifier Subroutine
+			switch(TRModuleStep)
+			{
+				case 0:
+					if(TRExtenderPneuRetSensor)
+						TRInitError += 1;
+					if(TRReorientPneuRetSensor)
+						TRInitError += 2;
+					break;
+				case 1:
+					if(TRExtenderPneuExtSensor)
+						TRInitError += 4;
+					break;
+				case 4:
+					if(TRReorientPneuExtSensor)
+						TRInitError += 8;
+			}
 			TRModuleStep++;
+		}
 	}
 	/* Transfer & Reorient Module ^ */
 
@@ -1640,7 +1891,7 @@ void Timer0IntHandler(void)
 						if(GTInittingTOCounter)
 						{
 							GTInittingTOCounter = 0;
-							GTInitError -= 1;
+							//GTInitError -= 1;
 						}
 					}
 					else
@@ -1650,7 +1901,7 @@ void Timer0IntHandler(void)
 							if(!GTInittingTOCounter)
 							{
 								GTInittingTOCounter = InittingTO;
-								GTInitError += 1;
+								//GTInitError += 1;
 							}
 						}
 					}
@@ -1686,7 +1937,7 @@ void Timer0IntHandler(void)
 					if(GTInittingTOCounter)
 					{
 						GTInittingTOCounter = 0;
-						GTInitError -= 2;
+						//GTInitError -= 2;
 					}
 				}
 				else
@@ -1696,7 +1947,7 @@ void Timer0IntHandler(void)
 						if(!GTInittingTOCounter)
 						{
 							GTInittingTOCounter = InittingTO;
-							GTInitError += 2;
+							//GTInitError += 2;
 						}
 					}
 				}
@@ -1718,6 +1969,8 @@ void Timer0IntHandler(void)
 					if(TRModuleWaiting)
 					{
 						TRVacuumValve	= FALSE;
+						TRModuleWaiting = FALSE;
+						TRModuleWaitingPick = TRUE;			// TR will wait until TransferPneu move before starting again
 					}
 				}
 
@@ -1735,7 +1988,7 @@ void Timer0IntHandler(void)
 					if(GTInittingTOCounter)
 					{
 						GTInittingTOCounter = 0;
-						GTInitError -= 4;
+						//GTInitError -= 4;
 					}
 				}
 				else
@@ -1745,7 +1998,7 @@ void Timer0IntHandler(void)
 						if(!GTInittingTOCounter)
 						{
 							GTInittingTOCounter = InittingTO;
-							GTInitError += 4;
+							//GTInitError += 4;
 						}
 					}
 				}
@@ -1767,7 +2020,7 @@ void Timer0IntHandler(void)
 					if(GTInittingTOCounter)
 					{
 						GTInittingTOCounter = 0;
-						GTInitError -= 8;
+						//GTInitError -= 8;
 					}
 				}
 				else
@@ -1777,7 +2030,7 @@ void Timer0IntHandler(void)
 						if(!GTInittingTOCounter)
 						{
 							GTInittingTOCounter = InittingTO;
-							GTInitError += 8;
+							//GTInitError += 8;
 						}
 					}
 				}
@@ -1818,7 +2071,7 @@ void Timer0IntHandler(void)
 					if(GTInittingTOCounter)
 					{
 						GTInittingTOCounter = 0;
-						GTInitError -= 16;
+						//GTInitError -= 16;
 					}
 				}
 				else
@@ -1828,7 +2081,7 @@ void Timer0IntHandler(void)
 						if(!GTInittingTOCounter)
 						{
 							GTInittingTOCounter = InittingTO;
-							GTInitError += 16;
+							//GTInitError += 16;
 						}
 					}
 				}
@@ -1843,9 +2096,9 @@ void Timer0IntHandler(void)
 					GTSA1ModuleWaiting = TRUE;
 					GTSA2ModuleWaiting = TRUE;
 					// Moved from GTModule = 2 v
-					if(TRModuleWaiting)
+					if(TRModuleWaitingPick)
 					{
-						TRModuleWaiting = FALSE;
+						TRModuleWaitingPick = FALSE;
 					}
 					// Moved from GTModule = 2 ^
 					if(!GTSbsMode)
@@ -1856,7 +2109,7 @@ void Timer0IntHandler(void)
 					if(GTInittingTOCounter)
 					{
 						GTInittingTOCounter = 0;
-						GTInitError -= 32;
+						//GTInitError -= 32;
 					}
 				}
 				else
@@ -1866,7 +2119,7 @@ void Timer0IntHandler(void)
 						if(!GTInittingTOCounter)
 						{
 							GTInittingTOCounter = InittingTO;
-							GTInitError += 32;
+							//GTInitError += 32;
 						}
 					}
 				}
@@ -1942,7 +2195,41 @@ void Timer0IntHandler(void)
 	{
 		GTInittingTOCounter--;
 		if(!GTInittingTOCounter)
+		{
+			// GT Init Error Identifier Subroutine
+			switch(GTModuleStep)
+			{
+				case 0:
+					if(GTOutFillOpenPneuLRetSensor)
+						GTInitError += 1;
+					if(GTOutFillOpenPneuRRetSensor)
+						GTInitError += 2;
+					if(GTTransferPneuRetSensor)
+						GTInitError += 4;
+					break;
+				case 1:
+					if(GTOutFillGripPneuLRetSensor)
+						GTInitError += 8;
+					if(GTOutFillGripPneuRRetSensor)
+						GTInitError += 16;
+					break;
+				case 2:
+					if(GTInFillGripPneuLRetSensor)
+						GTInitError += 32;
+					if(GTInFillGripPneuRRetSensor)
+						GTInitError += 64;
+					if(GTOutFillOpenPneuLExtSensor)
+						GTInitError += 128;
+					if(GTOutFillOpenPneuRExtSensor)
+						GTInitError += 256;
+					break;
+				case 6:
+					if(GTTransferPneuExtSensor)
+						GTInitError += 512;
+					break;
+			}
 			GTModuleStep++;
+		}
 	}
 	/* Grip & Transfer Module ^ */
 
@@ -1971,7 +2258,7 @@ void Timer0IntHandler(void)
 						if(OFInittingTOCounter)
 						{
 							OFInittingTOCounter = 0;
-							OFInitError -= 1;
+							//OFInitError -= 1;
 						}
 					}
 					else
@@ -1981,7 +2268,7 @@ void Timer0IntHandler(void)
 							if(!OFInittingTOCounter)
 							{
 								OFInittingTOCounter = InittingTO;
-								OFInitError += 1;
+								//OFInitError += 1;
 							}
 						}
 					}
@@ -2006,7 +2293,7 @@ void Timer0IntHandler(void)
 						if(OFInittingTOCounter)
 						{
 							OFInittingTOCounter = 0;
-							OFInitError -= 2;
+							//OFInitError -= 2;
 						}
 					}
 					else
@@ -2016,7 +2303,7 @@ void Timer0IntHandler(void)
 							if(!OFInittingTOCounter)
 							{
 								OFInittingTOCounter = InittingTO;
-								OFInitError += 2;
+								//OFInitError += 2;
 							}
 						}
 					}
@@ -2070,7 +2357,7 @@ void Timer0IntHandler(void)
 						if(OFInittingTOCounter)
 						{
 							OFInittingTOCounter = 0;
-							OFInitError -= 4;
+							//OFInitError -= 4;
 						}
 					}
 					else
@@ -2080,7 +2367,7 @@ void Timer0IntHandler(void)
 							if(!OFInittingTOCounter)
 							{
 								OFInittingTOCounter = InittingTO;
-								OFInitError += 4;
+								//OFInitError += 4;
 							}
 						}
 					}
@@ -2104,7 +2391,7 @@ void Timer0IntHandler(void)
 					if(OFInittingTOCounter)
 					{
 						OFInittingTOCounter = 0;
-						OFInitError -= 8;
+						//OFInitError -= 8;
 					}
 				}
 				else
@@ -2114,7 +2401,7 @@ void Timer0IntHandler(void)
 						if(!OFInittingTOCounter)
 						{
 							OFInittingTOCounter = InittingTO;
-							OFInitError += 8;
+							//OFInitError += 8;
 						}
 					}
 				}
@@ -2138,7 +2425,7 @@ void Timer0IntHandler(void)
 						if(OFInittingTOCounter)
 						{
 							OFInittingTOCounter = 0;
-							OFInitError -= 16;
+							//OFInitError -= 16;
 						}
 					}
 					else
@@ -2148,7 +2435,7 @@ void Timer0IntHandler(void)
 							if(!OFInittingTOCounter)
 							{
 								OFInittingTOCounter = InittingTO;
-								OFInitError += 16;
+								//OFInitError += 16;
 							}
 						}
 					}
@@ -2163,6 +2450,7 @@ void Timer0IntHandler(void)
 				{
 					OFRequestFilling = TRUE;
 					VFVibrator = TRUE;				// Start Vibrating
+					VFVibEngagePneuValveVibratorMode = TRUE;	// Start SUPER Vibrating
 					if(!OFSbsMode)
 						OFModuleStep = 8;
 					else
@@ -2178,6 +2466,7 @@ void Timer0IntHandler(void)
 					OFEngagePneuValve = FALSE;
 					OFOpenPneuValve = FALSE;
 					OFVacuumValve = FALSE;
+					VFVibEngagePneuValveVibratorMode = FALSE;	// Stop SUPER Vibrating
 					VFVibEngagePneuValve = FALSE;
 					VFVibrator = FALSE;					// Stop Vibrating
 					if( (!OFGatePneuRetSensor) && (!VFVibEngagePneuRetSensor) )
@@ -2191,7 +2480,7 @@ void Timer0IntHandler(void)
 						if(OFInittingTOCounter)
 						{
 							OFInittingTOCounter = 0;
-							OFInitError -= 32;
+							//OFInitError -= 32;
 						}
 					}
 					else
@@ -2201,7 +2490,7 @@ void Timer0IntHandler(void)
 							if(!OFInittingTOCounter)
 							{
 								OFInittingTOCounter = InittingTO;
-								OFInitError += 32;
+								//OFInitError += 32;
 							}
 						}
 					}
@@ -2231,8 +2520,67 @@ void Timer0IntHandler(void)
 	{
 		OFInittingTOCounter--;
 		if(!OFInittingTOCounter)
+		{
+			//OF Init Error Identifier Subroutine
+			switch(OFModuleStep)
+			{
+				case 0:
+					if(OFGatePneuRetSensor)
+						OFInitError += 1;
+					if(OFEngagePneuRetSensor)
+						OFInitError += 2;
+					if(OFOpenPneuRRetSensor)
+						OFInitError += 4;
+					if(OFOpenPneuLRetSensor)
+						OFInitError += 8;
+					if(VFVibEngagePneuRetSensor)
+						OFInitError += 16;
+					break;
+				case 1:
+					if(OFEngagePneuExtSensor)
+						OFInitError += 32;
+					if(OFOpenPneuRExtSensor)
+						OFInitError += 64;
+					if(OFOpenPneuLExtSensor)
+						OFInitError += 128;
+					break;
+				case 5:
+					if(VFVibEngagePneuExtSensor)
+						OFInitError += 256;
+					break;
+				case 6:
+					if(OFGatePneuExtSensor)
+						OFInitError += 512;
+					break;
+			}
 			OFModuleStep++;
+		}
 	}
+
+	if(VFVibEngagePneuValveVibratorMode)
+	{
+		if(VFVibEngageVibratorPeriodCounter)
+		{
+			VFVibEngageVibratorPeriodCounter--;
+			if(!VFVibEngageVibratorPeriodCounter)
+			{
+				if(VFVibEngagePneuValve)
+				{
+					VFVibEngagePneuValve = FALSE;
+					VFVibEngageVibratorPeriodCounter = (VFVibEngageVibratorPeriod * (100 - VFVibEngageVibratorDutyCycle)) / 100;
+				}
+				else
+				{
+					VFVibEngagePneuValve = TRUE;
+					VFVibEngageVibratorPeriodCounter = (VFVibEngageVibratorPeriod * VFVibEngageVibratorDutyCycle) / 100;
+				}
+			}
+		}
+		else
+			VFVibEngageVibratorPeriodCounter = (VFVibEngageVibratorPeriod * (100 - VFVibEngageVibratorDutyCycle)) / 100; // Low Duty Cycle = 100% - DutyCycle
+	}
+	else
+		VFVibEngageVibratorPeriodCounter = (VFVibEngageVibratorPeriod * (100 - VFVibEngageVibratorDutyCycle)) / 100; // Low Duty Cycle = 100% - DutyCycle
 	/* Filling Module ^ */
 
 	/* Sealing Module v */
@@ -2258,7 +2606,7 @@ void Timer0IntHandler(void)
 						if(SPInittingTOCounter)
 						{
 							SPInittingTOCounter = 0;
-							SPInitError -= 1;
+							//SPInitError -= 1;
 						}
 					}
 					else
@@ -2268,7 +2616,7 @@ void Timer0IntHandler(void)
 							if(!SPInittingTOCounter)
 							{
 								SPInittingTOCounter = InittingTO;
-								SPInitError += 1;
+								//SPInitError += 1;
 							}
 						}
 					}
@@ -2293,7 +2641,7 @@ void Timer0IntHandler(void)
 						if(SPInittingTOCounter)
 						{
 							SPInittingTOCounter = 0;
-							SPInitError -= 2;
+							//SPInitError -= 2;
 						}
 					}
 					else
@@ -2303,7 +2651,7 @@ void Timer0IntHandler(void)
 							if(!SPInittingTOCounter)
 							{
 								SPInittingTOCounter = InittingTO;
-								SPInitError += 2;
+								//SPInitError += 2;
 							}
 						}
 					}
@@ -2324,7 +2672,7 @@ void Timer0IntHandler(void)
 					if(SPInittingTOCounter)
 					{
 						SPInittingTOCounter = 0;
-						SPInitError -= 4;
+						//SPInitError -= 4;
 					}
 				}
 				else
@@ -2334,7 +2682,7 @@ void Timer0IntHandler(void)
 						if(!SPInittingTOCounter)
 						{
 							SPInittingTOCounter = InittingTO;
-							SPInitError += 4;
+							//SPInitError += 4;
 						}
 					}
 				}
@@ -2364,7 +2712,7 @@ void Timer0IntHandler(void)
 					if(SPInittingTOCounter)
 					{
 						SPInittingTOCounter = 0;
-						SPInitError -= 8;
+						//SPInitError -= 8;
 					}
 				}
 				else
@@ -2374,7 +2722,7 @@ void Timer0IntHandler(void)
 						if(!SPInittingTOCounter)
 						{
 							SPInittingTOCounter = InittingTO;
-							SPInitError += 8;
+							//SPInitError += 8;
 						}
 					}
 				}
@@ -2394,7 +2742,7 @@ void Timer0IntHandler(void)
 					if(SPInittingTOCounter)
 					{
 						SPInittingTOCounter = 0;
-						SPInitError -= 16;
+						//SPInitError -= 16;
 					}
 				}
 				else
@@ -2404,7 +2752,7 @@ void Timer0IntHandler(void)
 						if(!SPInittingTOCounter)
 						{
 							SPInittingTOCounter = InittingTO;
-							SPInitError += 16;
+							//SPInitError += 16;
 						}
 					}
 				}
@@ -2424,7 +2772,7 @@ void Timer0IntHandler(void)
 					if(SPInittingTOCounter)
 					{
 						SPInittingTOCounter = 0;
-						SPInitError -= 32;
+						//SPInitError -= 32;
 					}
 				}
 				else
@@ -2434,7 +2782,7 @@ void Timer0IntHandler(void)
 						if(!SPInittingTOCounter)
 						{
 							SPInittingTOCounter = InittingTO;
-							SPInitError += 32;
+							//SPInitError += 32;
 						}
 					}
 				}
@@ -2475,7 +2823,29 @@ void Timer0IntHandler(void)
 	{
 		SPInittingTOCounter--;
 		if(!SPInittingTOCounter)
+		{
+			//OF Init Error Identifier Subroutine
+			switch(SPModuleStep)
+			{
+				case 0:
+					if(SPVibEngagePneuRetSensor)
+						SPInitError += 1;
+					if(SPSealerPneuRetSensor)
+						SPInitError += 2;
+					if(SPPusherPneuExtSensor)
+						SPInitError += 4;
+					break;
+				case 1:
+					if(SPPusherPneuRetSensor)
+						SPInitError += 8;
+					break;
+				case 2:
+					if(SPVibEngagePneuExtSensor)
+						SPInitError += 16;
+					break;
+			}
 			SPModuleStep++;
+		}
 	}
 	/* Sealing Module ^ */
 
@@ -2567,12 +2937,25 @@ void Timer0IntHandler(void)
     		WNextOpGateDelayCounter = WNextOpGateDelay + 1;
     		WLCLWeightOKFlag = FALSE;
     		WLCLWeightOK = FALSE;
+    		if(WLCLZeroMONFlag)
+    			WLCLZeroDelayCounter = 1000;
+
     		//OFGatePneuFilled = TRUE;
     		//OFGatePneuFillingProcess = FALSE;
     	}
     }
     else
     	WLOpGatePneuValve = FALSE;
+
+    if(WLCLZeroDelayCounter)
+    {
+    	WLCLZeroDelayCounter--;
+    	if(!WLCLZeroDelayCounter)
+    	{
+			WLCLOnZeroingBtn = TRUE;
+			WLCLZeroMONFlag = FALSE;
+    	}
+    }
 
     if(WROpGatePneuDurationCounter)
     {
@@ -2583,12 +2966,24 @@ void Timer0IntHandler(void)
     		WNextOpGateDelayCounter = WNextOpGateDelay + 1;
     		WLCRWeightOKFlag = FALSE;
     		WLCRWeightOK = FALSE;
-    		//OFGatePneuFilled = TRUE;
+			if(WLCRZeroMONFlag)
+				WLCRZeroDelayCounter = 1000;
+			//OFGatePneuFilled = TRUE;
     		//OFGatePneuFillingProcess = FALSE;
     	}
     }
     else
     	WROpGatePneuValve = FALSE;
+
+    if(WLCRZeroDelayCounter)
+    {
+    	WLCRZeroDelayCounter--;
+    	if(!WLCRZeroDelayCounter)
+    	{
+			WLCROnZeroingBtn = TRUE;
+			WLCRZeroMONFlag = FALSE;
+    	}
+    }
 
     if(WNextOpGateDelayCounter)
     	WNextOpGateDelayCounter--;
@@ -3126,7 +3521,7 @@ main(void)
         /* Load Cell Reading ^ */
 
         // Weigher Module : Weighing, and passing to filling bucket
-        if(MachineRunning)
+        if( (MachineRunning && (!MachineStopping)) || WSoloEnable )
         {
         	// Left Weigher Module
             if(WLCLSDAReadingNormalised < ((WLCLTargetWeight - WLCLCorrectionWeight)* 10))
@@ -3189,20 +3584,24 @@ main(void)
                 WLCRWeightOKFlag = TRUE;
             }
         }
-        /* Passing to filling bucket
-        if( (!OFGatePneuFilled) && (!OFGatePneuFillingProcess) && (!WNextOpGateDelayCounter) )
-        {
-        	OFGatePneuFillingProcess = TRUE;
-        	if(WLCLWeightOK)
-        	   WLOpGatePneuDurationCounter = WLOpGatePneuDuration;
-            else if(WLCRWeightOK)
-        	   WROpGatePneuDurationCounter = WROpGatePneuDuration;
 
-        }*/
+        // Turn OFF Gates when WSoloEnable just DISABLED
+        if(LastWSoloEnable != WSoloEnable)
+        	if(!WSoloEnable)
+        	{
+            	WLLrGatePneuValve = FALSE;
+            	WLSmGatePneuValve = FALSE;
+            	WRLrGatePneuValve = FALSE;
+            	WRSmGatePneuValve = FALSE;
+            	WLCLWeightOK = FALSE;
+            	WLCRWeightOK = FALSE;
+        	}
+        LastWSoloEnable = WSoloEnable;
+
         // Output to OF Module when there is request
         if(WLCRWeightOK || WLCLWeightOK)
         {
-        	if(OFRequestFilling)
+        	if(OFRequestFilling || WSoloOpenGate)
         	{
 				if(WLCLWeightOK)
 				   WLOpGatePneuDurationCounter = WLOpGatePneuDuration;
@@ -3210,6 +3609,7 @@ main(void)
 				   WROpGatePneuDurationCounter = WROpGatePneuDuration;
 
 				OFRequestFilling = FALSE;
+				WSoloOpenGate = FALSE;
         	}
         }
         /* Weigher Module Operation Program ^ */
@@ -3217,33 +3617,35 @@ main(void)
         /* Control Program v */
         if((!ServiceMode) && (ComFlag))                                                                               // Operation Page (Not Service Mode)
         {
-            if(!MachineRunning)                                                                             // when machine is not running
+            if(!MachineRunning)                                                                          // when machine is not running
             {
-                if( RunBtn ) // (!PINBTNRUN)
-                {
-
-					TRSbsMode = FALSE;
-					GTSbsMode = FALSE;
-					OFSbsMode = FALSE;
-					SPSbsMode = FALSE;
-					MachineRunning = TRUE;
-					WLCLWeightOKCounter = 200;
-					WLCRWeightOKCounter = 200;
-					if( (!TRModuleStep) && (!GTModuleStep) && (!OFModuleStep) && (!SPModuleStep) )
+            	// If Machine is not busy, RunBtn, InitMON is available
+            	if( (!Initting) && (!WLCLZeroMONFlag) && (!WLCRZeroMONFlag) )
+            	{
+					if( RunBtn ) // (!PINBTNRUN)
 					{
-						TRModuleWaiting = FALSE;
-						GTSA1ModuleWaiting = FALSE;
-						GTSA2ModuleWaiting = FALSE;
-						OFModuleWaiting = FALSE;
-						GTRequestFilling = FALSE;
-					}
 
-                	RunBtn = FALSE;
-                }
-                if( InitMON )
-                {
-                	if(!Initting)
-                	{
+						TRSbsMode = FALSE;
+						GTSbsMode = FALSE;
+						OFSbsMode = FALSE;
+						SPSbsMode = FALSE;
+						MachineRunning = TRUE;
+						WLCLWeightOKCounter = 200;
+						WLCRWeightOKCounter = 200;
+						if( (!TRModuleStep) && (!GTModuleStep) && (!OFModuleStep) && (!SPModuleStep) )
+						{
+							TRModuleWaiting = FALSE;
+							TRModuleWaitingPick = FALSE;
+							GTSA1ModuleWaiting = FALSE;
+							GTSA2ModuleWaiting = FALSE;
+							OFModuleWaiting = FALSE;
+							GTRequestFilling = FALSE;
+						}
+
+						RunBtn = FALSE;
+					}
+					if( InitMON )
+					{
 						Initting = TRUE;
 						TRInitting = TRUE;
 						GTInitting = TRUE;
@@ -3253,9 +3655,9 @@ main(void)
 						GTInitError = 0;
 						OFInitError = 0;
 						SPInitError = 0;
-                	}
-                	InitMON = FALSE;
-                }
+						InitMON = FALSE;
+					}
+            	}
             }
             else                                                                                                    // when machine is RUNNING
             {
@@ -3290,6 +3692,7 @@ main(void)
         		GTSA2ModuleWaiting = FALSE;
         		OFModuleWaiting = FALSE;
         		TRModuleWaiting = FALSE;
+        		TRModuleWaitingPick = FALSE;
         		TRInitErrorResult = TRInitError;
         		GTInitErrorResult = GTInitError;
         		OFInitErrorResult = OFInitError;
@@ -3303,10 +3706,15 @@ main(void)
         	{
         		MachineStopping = FALSE;
         		MachineRunning = FALSE;
+            	WLLrGatePneuValve = FALSE;
+				WLSmGatePneuValve = FALSE;
+				WRLrGatePneuValve = FALSE;
+				WRSmGatePneuValve = FALSE;
         		GTSA1ModuleWaiting = FALSE;
         		GTSA2ModuleWaiting = FALSE;
         		OFModuleWaiting = FALSE;
         		TRModuleWaiting = FALSE;
+        		TRModuleWaitingPick = FALSE;
         		GTFirstCycle = TRUE;
         	}
         }
@@ -3332,7 +3740,7 @@ main(void)
 
         if(Error || FatalError || HeaterErrorMsg || FoilJamMsg || NoAirErrorMsg)
         {
-            if(blinkFlag)                           // Warning, took DoorOpen place in com
+            if(BlinkFlag)                           // Warning, took DoorOpen place in com
                 BlinkCom = TRUE;
             else
                 BlinkCom = FALSE;
@@ -3379,7 +3787,7 @@ main(void)
             // OUT: Function: Number 3
             ComOUT[22] = 0x03;
             // OUT: Data
-            ComOUT[23] = MachineRunning + (BlinkCom << 1) + (ProductCountBit << 2) + (GTFirstCycle << 3) + (MachineStopping << 4) + (Initting << 5);
+            ComOUT[23] = MachineRunning + (BlinkCom << 1) + (ProductCountBit << 2) + (GTFirstCycle << 3) + (MachineStopping << 4) + (Initting << 5) + (BlinkFlag << 6);
             ComOUT[24] = HeaterErrorMsg + (EyemarkError << 1) + (DoorOpen << 2) + (SPIComError << 3) + (NoAirErrorMsg << 4)  + (DatesensError << 5);
             ComOUT[25] = ITMotorTrayElevator + (ITMotorTrayElevatorDir << 1) + (ITValveTrayPos << 2) + (ITReady << 3);
             ComOUT[26] = TRExtenderPneuValve + (TRReorientPneuValve << 1) + (TRVacuumValve << 2) + (GTFPushPneuValve << 3) + (TRModuleWaiting << 4);
@@ -3471,7 +3879,7 @@ main(void)
 			ComOUT[104] = LifeDuration >> 16;
 			ComOUT[105] = LifeDuration >> 8;
 			ComOUT[106] = LifeDuration;
-			ComOUT[107] = 11;				// Program Version
+			ComOUT[107] = 12;				// Program Version
 
 			ComOUT[108] = TRInitErrorResult >> 8;
 			ComOUT[109] = TRInitErrorResult;
@@ -3501,6 +3909,7 @@ main(void)
             SPIOut[6] = SPVibEngagePneuValve + ( SPPusherValve << 1 ) + ( SPVibrator << 2 );
             SPIOut[7] = BufferSensor >> 8;
             SPIOut[8] = BufferSensor;
+            SPIOut[9] = TowerLightGreen + ( TowerLightYellow << 1 ) + ( TowerLightRed << 2 );
             SPIOut[24] = 0x0F;
             SPIOut[25] = 0x0F;
             SPIDataReady = TRUE;
